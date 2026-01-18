@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Chess vs AI</title>
+<style>
+body{
+  background:#222;color:white;font-family:sans-serif;margin:0
+}
+#menu,#game,#end{
+  display:flex;flex-direction:column;
+  align-items:center;justify-content:center;height:100vh
+}
+#board{
+  display:grid;grid-template-columns:repeat(8,60px);
+  border:4px solid white
+}
+.square{
+  width:60px;height:60px;
+  display:flex;align-items:center;justify-content:center;
+  font-size:36px;cursor:pointer;position:relative
+}
+.light{background:#eee;color:black}
+.dark{background:#777;color:black}
+.selected{outline:3px solid red}
+.move::after{
+  content:"";width:14px;height:14px;
+  background:rgba(0,255,0,.6);
+  border-radius:50%;position:absolute
+}
+.capture::after{
+  content:"";width:20px;height:20px;
+  border:3px solid red;border-radius:50%;
+  position:absolute
+}
+button,select{
+  padding:8px;margin:5px;font-size:14px
+}
+#status{height:24px;font-weight:bold}
+</style>
+</head>
+<body>
+
+<!-- ===== MENU ===== -->
+<div id="menu">
+<h1>Chess vs AI</h1>
+
+<button onclick="startPreset('easy')">Easy</button>
+<button onclick="startPreset('medium')">Medium</button>
+<button onclick="startPreset('hard')">Hard</button>
+
+<h3>Custom</h3>
+
+<label>Think Depth:
+<select id="depth">
+<option value="0">0</option>
+<option value="1">1</option>
+<option value="2">2</option>
+</select>
+</label>
+
+<label>Piece Values:
+<select id="values">
+<option value="low">Low</option>
+<option value="mild">Mild</option>
+<option value="strong">Strong</option>
+</select>
+</label>
+
+<button onclick="startCustom()">Start Custom</button>
+</div>
+
+<!-- ===== GAME ===== -->
+<div id="game" style="display:none">
+<div id="status"></div>
+<div id="board"></div>
+</div>
+
+<!-- ===== END ===== -->
+<div id="end" style="display:none">
+<h1 id="endText"></h1>
+<button onclick="location.reload()">Main Menu</button>
+</div>
+
+<script>
+/* ===== DOM ===== */
+const boardEl=document.getElementById("board");
+const statusEl=document.getElementById("status");
+const endEl=document.getElementById("end");
+const endText=document.getElementById("endText");
+
+/* ===== CONSTANTS ===== */
+const symbols={
+  P:"♙",R:"♖",N:"♘",B:"♗",Q:"♕",K:"♔",
+  p:"♟",r:"♜",n:"♞",b:"♝",q:"♛",k:"♚"
+};
+
+/* ===== STATE ===== */
+let board=[],selected=null,turn="white";
+let pieceValue={},thinkDepth=0;
+let aiHistory=[];
+
+/* ===== START MODES ===== */
+function startPreset(p){
+  if(p==="easy"){thinkDepth=0;pieceValue=lowValues();}
+  if(p==="medium"){thinkDepth=0;pieceValue=mildValues();}
+  if(p==="hard"){thinkDepth=1;pieceValue=strongValues();}
+  startGame();
+}
+
+function startCustom(){
+  thinkDepth=+document.getElementById("depth").value;
+  const v=document.getElementById("values").value;
+  pieceValue=v==="low"?lowValues():v==="mild"?mildValues():strongValues();
+  startGame();
+}
+
+function startGame(){
+  document.getElementById("menu").style.display="none";
+  document.getElementById("game").style.display="flex";
+  board=[
+    "rnbqkbnr",
+    "pppppppp",
+    "........",
+    "........",
+    "........",
+    "........",
+    "PPPPPPPP",
+    "RNBQKBNR"
+  ].map(r=>r.split(""));
+  turn="white";
+  selected=null;
+  aiHistory=[];
+  draw();
+}
+
+/* ===== PIECE VALUES ===== */
+function lowValues(){return{p:1,r:1,b:1,n:1,q:1,k:50}}
+function mildValues(){return{p:1,r:3,b:3,n:3,q:4,k:5}}
+function strongValues(){return{p:2,r:10,b:10,n:12,q:25,k:50}}
+
+/* ===== DRAW ===== */
+function draw(){
+  boardEl.innerHTML="";
+  const moves=selected?getLegalMoves(selected.x,selected.y):[];
+
+  for(let y=0;y<8;y++)for(let x=0;x<8;x++){
+    const d=document.createElement("div");
+    d.className="square "+((x+y)%2?"dark":"light");
+    if(selected&&selected.x===x&&selected.y===y)
+      d.classList.add("selected");
+
+    const m=moves.find(v=>v.x===x&&v.y===y);
+    if(m)d.classList.add(m.capture?"capture":"move");
+
+    if(board[y][x]!==".")d.textContent=symbols[board[y][x]];
+    d.onclick=()=>clickSquare(x,y);
+    boardEl.appendChild(d);
+  }
+
+  statusEl.textContent=
+    isKingInCheck(true)?"CHECK!":
+    isKingInCheck(false)?"AI in CHECK!":"";
+}
+
+/* ===== INPUT ===== */
+function clickSquare(x,y){
+  if(turn!=="white")return;
+  if(selected){
+    if(isLegalMove(selected.x,selected.y,x,y,true)){
+      makeMove(selected.x,selected.y,x,y);
+      selected=null;
+      turn="black";
+      draw();
+      setTimeout(aiMove,200);
+    }else selected=null;
+  }else if(board[y][x]===board[y][x].toUpperCase()){
+    selected={x,y};
+  }
+  draw();
+}
+
+/* ===== HELPERS ===== */
+function makeMove(x1,y1,x2,y2){
+  board[y2][x2]=board[y1][x1];
+  board[y1][x1]=".";
+}
+function cloneBoard(){return board.map(r=>r.slice());}
+function sameColor(a,b){
+  if(a==="."||b===".")return false;
+  return (a===a.toUpperCase())===(b===b.toUpperCase());
+}
+function isPathClear(x1,y1,x2,y2){
+  const dx=Math.sign(x2-x1),dy=Math.sign(y2-y1);
+  let x=x1+dx,y=y1+dy;
+  while(x!==x2||y!==y2){
+    if(board[y][x]!==".")return false;
+    x+=dx;y+=dy;
+  }
+  return true;
+}
+
+/* ===== RULES ===== */
+function isLegalMove(x1,y1,x2,y2,checkKing){
+  const p=board[y1][x1];
+  if(p==="."||sameColor(p,board[y2][x2]))return false;
+  const dx=x2-x1,dy=y2-y1;
+  const adx=Math.abs(dx),ady=Math.abs(dy);
+  const w=p===p.toUpperCase();
+  let ok=false;
+
+  switch(p.toLowerCase()){
+    case"p":{
+      const dir=w?-1:1,start=w?6:1;
+      if(dx===0&&dy===dir&&board[y2][x2]===".")ok=true;
+      if(dx===0&&dy===2*dir&&y1===start
+        &&board[y2][x2]==="."
+        &&board[y1+dir][x1]===".")ok=true;
+      if(adx===1&&dy===dir&&board[y2][x2]!==".")ok=true;
+    }break;
+    case"r":ok=(dx===0||dy===0)&&isPathClear(x1,y1,x2,y2);break;
+    case"b":ok=adx===ady&&isPathClear(x1,y1,x2,y2);break;
+    case"q":ok=(dx===0||dy===0||adx===ady)&&isPathClear(x1,y1,x2,y2);break;
+    case"n":ok=adx*ady===2;break;
+    case"k":ok=adx<=1&&ady<=1;break;
+  }
+  if(!ok)return false;
+
+  if(checkKing){
+    const save=cloneBoard();
+    makeMove(x1,y1,x2,y2);
+    const bad=isKingInCheck(w);
+    board=save;
+    return !bad;
+  }
+  return true;
+}
+
+function getLegalMoves(x,y){
+  let m=[];
+  for(let y2=0;y2<8;y2++)for(let x2=0;x2<8;x2++)
+    if(isLegalMove(x,y,x2,y2,true))
+      m.push({x:x2,y:y2,capture:board[y2][x2]!=="."});
+  return m;
+}
+
+function isKingInCheck(w){
+  let kx,ky;
+  for(let y=0;y<8;y++)for(let x=0;x<8;x++)
+    if(board[y][x]===(w?"K":"k")){kx=x;ky=y;}
+  for(let y=0;y<8;y++)for(let x=0;x<8;x++){
+    const p=board[y][x];
+    if(p!=="."&&(p===p.toUpperCase())!==w)
+      if(isLegalMove(x,y,kx,ky,false))return true;
+  }
+  return false;
+}
+
+/* ===== AI ===== */
+function evaluateBoard(){
+  let s=0;
+  for(let y=0;y<8;y++)for(let x=0;x<8;x++){
+    const p=board[y][x];
+    if(p!=="."){
+      const v=pieceValue[p.toLowerCase()]||0;
+      s+=(p===p.toLowerCase()?v:-v);
+    }
+  }
+  return s;
+}
+
+function getAllMoves(w){
+  let m=[];
+  for(let y=0;y<8;y++)for(let x=0;x<8;x++){
+    const p=board[y][x];
+    if(p!=="."&&(p===p.toUpperCase())===w)
+      for(let y2=0;y2<8;y2++)for(let x2=0;x2<8;x2++)
+        if(isLegalMove(x,y,x2,y2,true))
+          m.push({x,y,x2,y2});
+  }
+  return m;
+}
+
+function aiMove(){
+  const moves=getAllMoves(false)
+    .filter(m=>!repeatThreeTimes(m));
+
+  if(!moves.length){
+    endGame(isKingInCheck(false)?"You Win!":"Stalemate");
+    return;
+  }
+
+  let best=-1e9,bestMove=moves[0];
+  for(const m of moves){
+    const s=minimax(m,thinkDepth,true);
+    if(s>best){best=s;bestMove=m;}
+  }
+
+  aiHistory.push(bestMove);
+  if(aiHistory.length>3)aiHistory.shift();
+
+  makeMove(bestMove.x,bestMove.y,bestMove.x2,bestMove.y2);
+  turn="white";
+  draw();
+
+  if(getAllMoves(true).length===0)
+    endGame(isKingInCheck(true)?"You Lose!":"Stalemate");
+}
+
+function repeatThreeTimes(m){
+  if(aiHistory.length<2)return false;
+  return aiHistory[0].x===m.x&&aiHistory[0].y===m.y
+      && aiHistory[0].x2===m.x2&&aiHistory[0].y2===m.y2
+      && aiHistory[1].x===m.x&&aiHistory[1].y===m.y
+      && aiHistory[1].x2===m.x2&&aiHistory[1].y2===m.y2;
+}
+
+function minimax(m,d,white){
+  const save=cloneBoard();
+  makeMove(m.x,m.y,m.x2,m.y2);
+  let val;
+
+  if(d===0){
+    val=evaluateBoard();
+  }else{
+    const moves=getAllMoves(white);
+    val=white?1e9:-1e9;
+    for(const r of moves){
+      const s=minimax(r,d-1,!white);
+      val=white?Math.min(val,s):Math.max(val,s);
+    }
+  }
+
+  board=save;
+  return val;
+}
+
+/* ===== END ===== */
+function endGame(text){
+  document.getElementById("game").style.display="none";
+  endEl.style.display="flex";
+  endText.textContent=text;
+}
+</script>
+</body>
+</html>
